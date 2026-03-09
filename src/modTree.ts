@@ -295,7 +295,7 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
    * modules will be collapsed.
    *
    */
-  public loadModules(modPath: Uri): Promise<Array<ModObject>> {
+  public loadModules(modPath: Uri): Promise<{ rawModules: ModObject[]; modParentPath: string }> {
     return new Promise((resolve, reject) => {
       let modParentPath = getParentNode(modPath.fsPath);
 
@@ -311,7 +311,7 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
           stdout = '[' + stdout + ']';
           try {
             let rawModulesData: ModObject[] = JSON.parse(stdout);
-            resolve(rawModulesData);
+            resolve({ rawModules: rawModulesData, modParentPath });
           } catch (err) {
             reject(err + ', raw: ' + stdout);
           }
@@ -322,8 +322,16 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
     });
   }
 
-  public parseModules(rawModules: ModObject[]): Promise<Array<ModItem>> {
+  public parseModules(rawModules: ModObject[], modParentPath: string): Promise<Array<ModItem>> {
     return new Promise((resolve, reject) => {
+      // Find the main module that matches the current go.mod directory.
+      // In a go.work environment, the first module returned by `go list` might not be the current one.
+      const mainIndex = rawModules.findIndex((mod) => mod.Dir === modParentPath);
+      if (mainIndex > 0) {
+        // Swap the main module to the first position.
+        [rawModules[0], rawModules[mainIndex]] = [rawModules[mainIndex], rawModules[0]];
+      }
+
       let modulesList: ModItem[] = [];
       let readableModulesLength = 0;
       // If countMainModules > 1, we treat the module group to be a go work group.
@@ -385,8 +393,8 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
   public update(modFile: Uri): Promise<string> {
     return new Promise((resolve, rejects) => {
       this.loadModules(modFile)
-        .then((rawModulesList) => {
-          this.parseModules(rawModulesList).then((modulesList: any) => {
+        .then(({ rawModules, modParentPath }) => {
+          this.parseModules(rawModules, modParentPath).then((modulesList: any) => {
             this._rootMap.set(modulesList[0]._modObject!.Path, modulesList);
             this.updateView();
             resolve(modulesList[0]._modObject.Path);
