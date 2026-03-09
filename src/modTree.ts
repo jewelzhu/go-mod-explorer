@@ -457,6 +457,10 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
 
   // ref: #61
   public actionReveal2(uri: Uri) {
+    if (this.isPathInWorkspace(uri.fsPath)) {
+      console.log(`[gomod.reveal] skip workspace file: ${uri.fsPath}`);
+      return;
+    }
     console.log('reveal to:', uri);
     this._treeView?.reveal(new ModItem(path.basename(uri.fsPath), uri, ModItemType.File), {
       select: true,
@@ -562,6 +566,16 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
     return element;
   }
 
+  private isPathInWorkspace(targetPath: string): boolean {
+    const normalizedTarget = path.resolve(targetPath);
+    return (
+      workspace.workspaceFolders?.some((folder) => {
+        const folderPath = path.resolve(folder.uri.fsPath);
+        return normalizedTarget === folderPath || normalizedTarget.startsWith(folderPath + path.sep);
+      }) ?? false
+    );
+  }
+
   public getParent(element: ModItem): ModItem | null {
     let parentName = path.basename(path.dirname(element.resourceUri?.path));
     let parentPathString = path.resolve(element.resourceUri?.fsPath, '..');
@@ -572,7 +586,8 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
     }
 
     if (element._visualParent) {
-      let treeHead = this._rootMap.get(element._visualParent);
+      const visualParent = element._visualParent;
+      let treeHead = this._rootMap.get(visualParent);
       element._visualParent = undefined;
       if (treeHead) {
         return treeHead[0];
@@ -585,9 +600,20 @@ export class ModTree implements TreeDataProvider<ModItem>, TextDocumentContentPr
       }
     }
 
+    // If the current parent is the root directory of a go.mod file (within the project), return the root node of that module.
+    for (const [modulesName, mods] of this._rootMap) {
+      if (mods[0].resourceUri?.path === parentPathURI.path) {
+        return mods[0];
+      }
+    }
+
+    // If the parent is within the current workspace but not part of the go-mod-explorer dependency tree, return the root node of the module.
     for (const [modulesName, mods] of this._rootMap) {
       for (let index = 1; index < mods.length; index++) {
         if (parentPathURI.path === mods[index].resourceUri?.path) {
+          if (this.isPathInWorkspace(parentPathString)) {
+            break;
+          }
           mods[index]._visualParent = modulesName;
           return mods[index];
         }
